@@ -1,0 +1,23 @@
+# Clock input (50 MHz)
+NET "clk" LOC = "C9" | IOSTANDARD = LVCMOS33;
+NET "clk" PERIOD = 20 ns HIGH 50%;
+
+# Buttons (pressed=1 with pulldown)
+NET "btn_start" LOC = "H13" | IOSTANDARD = LVCMOS33 | PULLDOWN;
+NET "btn_stop"  LOC = "V4"  | IOSTANDARD = LVCMOS33 | PULLDOWN;
+NET "btn_reset" LOC = "K17" | IOSTANDARD = LVCMOS33 | PULLDOWN;
+
+# 7-segment digit enables (active low)
+NET "an<0>" LOC = "F8" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+NET "an<1>" LOC = "C7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+NET "an<2>" LOC = "D7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+NET "an<3>" LOC = "F7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+
+# 7-segment segments a–g (active low)
+NET "seg<0>" LOC = "E7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # a
+NET "seg<1>" LOC = "B6" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # b
+NET "seg<2>" LOC = "A6" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # c
+NET "seg<3>" LOC = "C5" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # d
+NET "seg<4>" LOC = "D5" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # e
+NET "seg<5>" LOC = "A4" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # f
+NET "seg<6>" LOC = "B4" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # g
