@@ -1,0 +1,317 @@
+-- ================================================================
+-- debounce_edge.vhd + timer_mmss_countdown_50mhz in ONE FILE
+-- Spartan-3E / ISE friendly (VHDL-93)
+-- ================================================================
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+--------------------------------------------------------------------
+-- Debounce + rising-edge pulse generator (pressed='1')
+--------------------------------------------------------------------
+entity debounce_edge is
+    generic (
+        CLK_HZ      : positive := 50_000_000;
+        DEBOUNCE_MS : positive := 20
+    );
+    port (
+        clk   : in  std_logic;
+        btn   : in  std_logic;
+        clean : out std_logic;
+        rise  : out std_logic
+    );
+end entity debounce_edge;
+
+architecture rtl of debounce_edge is
+    constant MAX_COUNT : natural := (CLK_HZ / 1000) * DEBOUNCE_MS;
+    signal cnt  : natural range 0 to MAX_COUNT := 0;
+    signal prev : std_logic := '0';
+    signal c    : std_logic := '0';
+begin
+    clean <= c;
+
+    process(clk)
+        variable cnt_v : natural;
+        variable c_v   : std_logic;
+    begin
+        if rising_edge(clk) then
+            cnt_v := cnt;
+
+            if btn = '1' then
+                if cnt_v < MAX_COUNT then
+                    cnt_v := cnt_v + 1;
+                end if;
+            else
+                cnt_v := 0;
+            end if;
+
+            if cnt_v = MAX_COUNT then
+                c_v := '1';
+            else
+                c_v := '0';
+            end if;
+
+            rise <= c_v and (not prev);
+            prev <= c_v;
+
+            c   <= c_v;
+            cnt <= cnt_v;
+        end if;
+    end process;
+end architecture rtl;
+
+-- IMPORTANT: context clause must be repeated for a new design unit in same file
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+--------------------------------------------------------------------
+-- Timer: mm:ss (00:00..99:59), UP/DOWN mode
+--------------------------------------------------------------------
+entity timer_mmss_countdown_50mhz is
+    generic (
+        CLK_HZ : positive := 50_000_000
+    );
+    port (
+        clk       : in  std_logic;
+
+        btn_run   : in  std_logic; -- V4  : start/stop toggle
+        btn_max   : in  std_logic; -- H13 : load 99:59
+        btn_reset : in  std_logic; -- K17 : reset to 00:00
+        btn_cd    : in  std_logic; -- D18 : toggle DOWN/UP
+
+        an        : out std_logic_vector(3 downto 0); -- active low
+        seg       : out std_logic_vector(6 downto 0)  -- active low (a b c d e f g)
+    );
+end entity timer_mmss_countdown_50mhz;
+
+architecture rtl of timer_mmss_countdown_50mhz is
+
+    -- 1Hz tick pulse
+    constant TICK_DIV : natural := CLK_HZ; -- 50_000_000 for 1Hz
+    signal tick_cnt   : natural range 0 to TICK_DIV-1 := 0;
+    signal tick_1hz   : std_logic := '0';
+
+    -- Debounced edges
+    signal run_rise, max_rise, reset_rise, cd_rise : std_logic := '0';
+    signal run_clean, max_clean, reset_clean, cd_clean : std_logic := '0';
+
+    -- State
+    signal running    : std_logic := '0';
+    signal count_down : std_logic := '1'; -- default = countdown
+
+    -- Digits mm:ss
+    signal m10 : natural range 0 to 9 := 0; -- minutes tens
+    signal m01 : natural range 0 to 9 := 0; -- minutes ones
+    signal s10 : natural range 0 to 5 := 0; -- seconds tens
+    signal s01 : natural range 0 to 9 := 0; -- seconds ones
+
+    -- Scan
+    signal scan_cnt  : unsigned(25 downto 0) := (others => '0');
+    signal digit_sel : unsigned(1 downto 0)  := (others => '0');
+    signal cur_digit : natural range 0 to 9 := 0;
+
+    function is_zero_mmss(
+        mm10 : natural; mm01 : natural; ss10 : natural; ss01 : natural
+    ) return boolean is
+    begin
+        return (mm10=0 and mm01=0 and ss10=0 and ss01=0);
+    end function;
+
+    function seg7(d : natural) return std_logic_vector is
+        variable s : std_logic_vector(6 downto 0);
+    begin
+        case d is
+            when 0 => s := "0000001";
+            when 1 => s := "1001111";
+            when 2 => s := "0010010";
+            when 3 => s := "0000110";
+            when 4 => s := "1001100";
+            when 5 => s := "0100100";
+            when 6 => s := "0100000";
+            when 7 => s := "0001111";
+            when 8 => s := "0000000";
+            when 9 => s := "0000100";
+            when others => s := "1111111";
+        end case;
+        return s;
+    end function;
+
+begin
+
+    -- Debouncers
+    u_db_run : entity work.debounce_edge
+        generic map (CLK_HZ => CLK_HZ, DEBOUNCE_MS => 20)
+        port map (clk => clk, btn => btn_run, clean => run_clean, rise => run_rise);
+
+    u_db_max : entity work.debounce_edge
+        generic map (CLK_HZ => CLK_HZ, DEBOUNCE_MS => 20)
+        port map (clk => clk, btn => btn_max, clean => max_clean, rise => max_rise);
+
+    u_db_reset : entity work.debounce_edge
+        generic map (CLK_HZ => CLK_HZ, DEBOUNCE_MS => 20)
+        port map (clk => clk, btn => btn_reset, clean => reset_clean, rise => reset_rise);
+
+    u_db_cd : entity work.debounce_edge
+        generic map (CLK_HZ => CLK_HZ, DEBOUNCE_MS => 20)
+        port map (clk => clk, btn => btn_cd, clean => cd_clean, rise => cd_rise);
+
+    -- 1Hz pulse generator
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            if tick_cnt = TICK_DIV - 1 then
+                tick_cnt <= 0;
+                tick_1hz <= '1';
+            else
+                tick_cnt <= tick_cnt + 1;
+                tick_1hz <= '0';
+            end if;
+        end if;
+    end process;
+
+    -- Control + counter update
+    process(clk)
+    begin
+        if rising_edge(clk) then
+
+            -- RESET: stop + clear + default countdown
+            if reset_rise = '1' then
+                running    <= '0';
+                count_down <= '1';
+                m10 <= 0; m01 <= 0; s10 <= 0; s01 <= 0;
+
+            else
+                -- MAX: load 99:59 and stop
+                if max_rise = '1' then
+                    running <= '0';
+                    m10 <= 9; m01 <= 9; s10 <= 5; s01 <= 9;
+                end if;
+
+                -- toggle DOWN/UP
+                if cd_rise = '1' then
+                    count_down <= not count_down;
+                end if;
+
+                -- start/stop toggle
+                if run_rise = '1' then
+                    running <= not running;
+                end if;
+
+                -- 1Hz tick action
+                if (tick_1hz = '1') and (running = '1') then
+                    if count_down = '1' then
+                        -- DOWN: stop at 00:00
+                        if is_zero_mmss(m10, m01, s10, s01) then
+                            running <= '0';
+                        else
+                            -- decrement seconds
+                            if s01 > 0 then
+                                s01 <= s01 - 1;
+                            else
+                                s01 <= 9;
+                                if s10 > 0 then
+                                    s10 <= s10 - 1;
+                                else
+                                    s10 <= 5;
+                                    -- borrow from minutes
+                                    if m01 > 0 then
+                                        m01 <= m01 - 1;
+                                    else
+                                        m01 <= 9;
+                                        if m10 > 0 then
+                                            m10 <= m10 - 1;
+                                        else
+                                            m10 <= 0;
+                                        end if;
+                                    end if;
+                                end if;
+                            end if;
+                        end if;
+
+                    else
+                        -- UP: wrap after 99:59 -> 00:00
+                        if (m10=9 and m01=9 and s10=5 and s01=9) then
+                            m10 <= 0; m01 <= 0; s10 <= 0; s01 <= 0;
+                        else
+                            if s01 = 9 then
+                                s01 <= 0;
+                                if s10 = 5 then
+                                    s10 <= 0;
+                                    if m01 = 9 then
+                                        m01 <= 0;
+                                        if m10 = 9 then
+                                            m10 <= 0;
+                                        else
+                                            m10 <= m10 + 1;
+                                        end if;
+                                    else
+                                        m01 <= m01 + 1;
+                                    end if;
+                                else
+                                    s10 <= s10 + 1;
+                                end if;
+                            else
+                                s01 <= s01 + 1;
+                            end if;
+                        end if;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process;
+
+    -- Digit multiplex
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            scan_cnt <= scan_cnt + 1;
+        end if;
+    end process;
+
+    digit_sel <= scan_cnt(17 downto 16);
+
+    -- Display order: [s01, s10, m01, m10]
+    process(digit_sel, s01, s10, m01, m10)
+    begin
+        case to_integer(digit_sel) is
+            when 0 =>
+                an <= "1110"; cur_digit <= s01;
+            when 1 =>
+                an <= "1101"; cur_digit <= s10;
+            when 2 =>
+                an <= "1011"; cur_digit <= m01;
+            when others =>
+                an <= "0111"; cur_digit <= m10;
+        end case;
+    end process;
+
+    seg <= seg7(cur_digit);
+
+end architecture rtl;
+
+# Clock input (50 MHz)
+NET "clk" LOC = "C9" | IOSTANDARD = LVCMOS33;
+NET "clk" PERIOD = 20 ns HIGH 50%;
+
+# Buttons (pressed=1 with pulldown)
+NET "btn_run"   LOC = "V4"  | IOSTANDARD = LVCMOS33 | PULLDOWN;  # start/stop toggle
+NET "btn_max"   LOC = "H13" | IOSTANDARD = LVCMOS33 | PULLDOWN;  # load 99:59
+NET "btn_reset" LOC = "K17" | IOSTANDARD = LVCMOS33 | PULLDOWN;  # reset
+NET "btn_cd"    LOC = "D18" | IOSTANDARD = LVCMOS33 | PULLDOWN;  # countdown toggle
+
+# 7-segment digit enables (active low)
+NET "an<0>" LOC = "F8" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+NET "an<1>" LOC = "C7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+NET "an<2>" LOC = "D7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+NET "an<3>" LOC = "F7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;
+
+# 7-segment segments a–g (active low)
+NET "seg<0>" LOC = "E7" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # a
+NET "seg<1>" LOC = "B6" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # b
+NET "seg<2>" LOC = "A6" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # c
+NET "seg<3>" LOC = "C5" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # d
+NET "seg<4>" LOC = "D5" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # e
+NET "seg<5>" LOC = "A4" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # f
+NET "seg<6>" LOC = "B4" | IOSTANDARD = LVCMOS33 | SLEW = SLOW | DRIVE = 8;  # g
